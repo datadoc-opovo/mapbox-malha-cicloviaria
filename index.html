@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapbox Malha Cicloviaria</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans&family=Roboto+Condensed:wght@300;400;700&display=swap" rel="stylesheet">
+    <link type="text/css" href="cicloviaria-fortaleza.css" rel="stylesheet"  title="" />
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v2.0.0/mapbox-gl.js'></script>
+    <script src="https://unpkg.com/intersection-observer@0.5.1/intersection-observer.js"></script>
+    <script src="https://unpkg.com/scrollama"></script>
+    <script src="https://d3js.org/d3.v6.min.js" charset="utf-8"></script>
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+</head>
+<body>
+
+<!-- MAPBOX -->
+<!-- Conteúdo da narrativa: Mapa e Story -->
+<div id="map"></div>
+<div id="story"></div> 
+
+<script src="bairrosFortaleza.js"></script>
+
+<!-- Configurações MapBox, cores e Funções de apoio -->
+<script src="config.js"></script>
+
+<!-- Inicialização do Mapa -->
+<script>            
+
+    var story = document.getElementById('story');
+    var features = document.createElement('div');
+    features.setAttribute('id', 'features');
+
+    mapboxgl.accessToken = config.accessToken;
+
+    const transformRequest = (url) => {
+        const hasQuery = url.indexOf("?") !== -1;
+        const suffix = hasQuery ? "&pluginName=scrollytellingV2" : "?pluginName=scrollytellingV2";
+        return {
+        url: url + suffix
+        }
+    }
+    var map = new mapboxgl.Map({
+        container: 'map',
+        style: config.style,
+        center: [-38.52, -3.775],
+        zoom: 11,
+        bearing: 30,
+        pitch: 45,
+        interactive: false,
+        transformRequest: transformRequest
+    });
+
+    map.on("load", function() {
+
+        const layers = map.getStyle().layers;
+        let firstSymbolId;
+        for (const layer of layers) {
+            if (layer.type === 'symbol') {
+            firstSymbolId = layer.id;
+            break;
+            }
+        }
+        map.addSource('bairros', {
+            type: 'geojson',
+            data: bairros
+        });
+        map.addSource('malha_cicloviaria', {
+            type: 'geojson',
+            data: 'data/malha_cicloviaria_atual.geojson'
+        });
+        map.addSource('malha_viaria', {
+            type: 'geojson',
+            data: 'data/eixos_viarios.geojson'
+        });
+
+      // Todos os Bairros:
+        map.addLayer({
+            'id': 'bairrosLayers',
+            'type': 'fill',
+            'source': 'bairros',
+            'paint': {
+                "fill-color":['match', 
+                ['string', ['get', 'Faixa IDH']],
+                    ...cores_por_IDH,
+                'white'],
+                // "fill-color": ["step",
+                // ["get","idhm_2010"],
+
+                // "#a34b4b",0,"#a34b4b",0.5,
+                // "#e58d8c",0.6,"#f1a662",0.7,
+                // "#659bfc",0.8,"#2b6af7"], 
+            'fill-opacity': 0,
+            }
+        },
+            firstSymbolId);
+
+        // Contorno em cinza para destacar os bairros:
+        map.addLayer({
+            'id': 'bairrosLayersLines',
+            'type': 'line',
+            'source': 'bairros',
+            'paint': {
+                'line-color': 'gray',
+                'line-width': 0.5
+            }
+        });
+        // Bairro em Destaque:
+        map.addLayer({
+            'id': 'bairro-destacado',
+            'type': 'fill',
+            'source': 'bairros',
+            'paint': {
+                "fill-color":["step",
+                ["get","idhm_2010"],
+
+                "#a34b4b",0,"#a34b4b",0.5,
+                "#e58d8c",0.6,"#f1a662",0.7,
+                "#659bfc",0.8,"#2b6af7"],
+                'fill-opacity' : .5,
+            },
+            'filter': ['==', 'bairro', '']
+        },
+            firstSymbolId);
+        // Linha de contorno para o bairro em destaque:
+        map.addLayer({
+            'id': 'bairro-destacado-linha',
+            'type': 'line',
+            'source': 'bairros',
+            'paint': {
+                'line-color': '#000',            
+                'line-width': 5,
+                'line-opacity' : .5,
+            },
+            'filter': ['==', 'bairro', '']
+        });
+        // Malha Viária:
+        map.addLayer({
+            'id': 'malha_viaria_layer',
+            'type': 'line',
+            'source': 'malha_viaria',
+            'paint': {
+                'line-color': cor_malha_viaria,
+                'line-width': 2,
+                'line-opacity': 0.5,
+            }
+        },
+            firstSymbolId);
+        // Malha Cicloviária:
+        map.addLayer({
+            'id': 'malha_cicloviaria_layer',
+            'type': 'line',
+            'source': 'malha_cicloviaria',
+            'paint': {
+                'line-color':cor_malha_cicloviaria,
+                'line-width': 6,
+                'line-opacity': 0.8,
+
+            }
+        },
+            firstSymbolId);       
+    
+        scroller
+        .setup({
+            step: '.step',
+            offset: 0.6,
+            progress: true
+        })
+        .onStepEnter(response => {
+            var chapter = chapters.find(chap => chap.id === response.element.id);
+            response.element.classList.add('active');
+            map[chapter.mapAnimation || 'flyTo'](chapter.location);
+
+            if (config.showMarkers) {
+                marker.setLngLat(chapter.location.center);
+            }
+            if (chapter.onChapterEnter.length > 0) {
+                chapter.onChapterEnter.forEach(setLayerOpacity);
+            }
+            if (chapter.callback) {
+                window[chapter.callback]();
+            }
+            if (chapter.rotateAnimation) {
+                map.once('moveend', function() {
+                    const rotateNumber = map.getBearing();
+                    map.rotateTo(rotateNumber + 90, {
+                        duration: 24000, easing: function (t) {
+                            return t;
+                        }
+                    });
+                });
+            }
+        })
+        .onStepExit(response => {
+            var chapter = chapters.find(chap => chap.id === response.element.id);
+            response.element.classList.remove('active');
+            if (chapter.onChapterExit.length > 0) {
+                chapter.onChapterExit.forEach(setLayerOpacity);
+            }
+        });
+    });
+
+</script> 
+
+<!-- Definição e comportamento dos capítulos do scroll -->
+<script src="script1.js"></script>
+
+<!-- Definição e controle do scroll -->
+<script>
+    chapters.forEach((record, idx) => {
+        var container = document.createElement('div');
+        var chapter = document.createElement('div');
+
+        if (record.title) {
+            var title = document.createElement('h2');
+            title.innerText = record.title;
+            chapter.appendChild(title);
+        }
+
+        if (record.image) {
+            var image = new Image();
+            image.src = record.image;
+            chapter.appendChild(image);
+        }
+
+        if (record.description) {
+            var story = document.createElement('div');
+            story.classList.add('box');
+            story.innerHTML = record.description;
+
+            if (record.infoBox)
+                story.innerHTML+=record.infoBox;
+            
+            chapter.appendChild(story);
+        }
+
+        container.setAttribute('id', record.id);
+        container.classList.add('step');
+        if (idx === 0) {
+            container.classList.add('active');
+        }
+
+        chapter.classList.add(config.theme);
+        container.appendChild(chapter);
+        container.classList.add(alignments[record.alignment] || 'centered');
+        if (record.hidden) {
+            container.classList.add('hidden');
+        }
+        features.appendChild(container);
+    });
+
+
+    story.appendChild(features);
+
+    if (config.showMarkers) {
+        var marker = new mapboxgl.Marker({ color: config.markerColor });
+        marker.setLngLat(chapters[0].location.center).addTo(map);
+    }
+
+    var scroller = scrollama();
+
+    window.addEventListener('resize', scroller.resize);
+</script>
+<!-- /MAPBOX -->
+
+</body>
+</html>
